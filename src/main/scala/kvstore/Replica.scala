@@ -46,6 +46,12 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   // the current set of replicators
   var replicators = Set.empty[ActorRef]
 
+  // the last acknowledged sequence number
+  var lastAckSeq = -1L
+
+  // the expected sequence number
+  var expectedSeq = 0L
+
   arbiter ! Join
 
   def receive = {
@@ -85,17 +91,19 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case Get(key, id) => {
       val opt = kv.get(key)
       sender ! GetResult(key, opt, id)
-    }
-    case Snapshot(key, valueOption, seq) => {
-      valueOption match {
-        case Some(value) => { 
-          kv += key -> value 
+    } case Snapshot(key, valueOption, seq) => {
+      val expected = Math.max(expectedSeq, lastAckSeq + 1)
+      if (seq < expected) {
+        sender ! SnapshotAck(key, seq)
+      } else if (seq == expected) {
+        valueOption match {
+          case Some(value) => { kv += key -> value }
+          case None => { kv -= key }
         }
-        case None => { 
-          kv -= key 
-        }
+        lastAckSeq = seq
+        expectedSeq = lastAckSeq + 1
+        sender ! SnapshotAck(key, seq)
       }
-      sender ! SnapshotAck(key, seq)
     }
   }
 
