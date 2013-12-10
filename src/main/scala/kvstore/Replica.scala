@@ -57,21 +57,46 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   val leader: Receive = {
     case Insert(key, value, id) => {
       kv += key -> value
+      replicators foreach { r => r ! Replicate(key, Some(value), id) }
       sender ! OperationAck(id)
     }
     case Remove(key, id) => {
       kv -= key
+      replicators foreach { r => r ! Replicate(key, None, id) }
       sender ! OperationAck(id)
     }
     case Get(key, id) => {
       val opt = kv.get(key)
       sender ! GetResult(key, opt, id)
     }
+    case Replicas(replicas) => {
+      val others = replicas - self
+      val added = others filter { !secondaries.contains(_) }
+      added foreach { s =>
+        val replicator = context.actorOf(Replicator.props(s))
+        secondaries += s -> replicator
+        replicators += replicator
+      }
+    }
   }
 
   /* TODO Behavior for the replica role. */
   val replica: Receive = {
-    case _ =>
+    case Get(key, id) => {
+      val opt = kv.get(key)
+      sender ! GetResult(key, opt, id)
+    }
+    case Snapshot(key, valueOption, seq) => {
+      valueOption match {
+        case Some(value) => { 
+          kv += key -> value 
+        }
+        case None => { 
+          kv -= key 
+        }
+      }
+      sender ! SnapshotAck(key, seq)
+    }
   }
 
 }
