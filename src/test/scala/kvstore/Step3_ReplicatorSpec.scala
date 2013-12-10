@@ -21,7 +21,7 @@ class Step3_ReplicatorSpec extends TestKit(ActorSystem("Step3ReplicatorSpec"))
     system.shutdown()
   }
 
-  test("case1: Replicator should send snapshots when asked to replicate") {
+  ignore("case1: Replicator should send snapshots when asked to replicate") {
     val secondary = TestProbe()
     val replicator = system.actorOf(Replicator.props(secondary.ref), "case1-replicator")
 
@@ -45,7 +45,7 @@ class Step3_ReplicatorSpec extends TestKit(ActorSystem("Step3ReplicatorSpec"))
     secondary.reply(SnapshotAck("k1", 3L))
   }
 
-  test("case2: Replicator should retry until acknowledged by secondary") {
+  ignore("case2: Replicator should retry until acknowledged by secondary") {
     val secondary = TestProbe()
     val replicator = system.actorOf(Replicator.props(secondary.ref), "case2-replicator")
 

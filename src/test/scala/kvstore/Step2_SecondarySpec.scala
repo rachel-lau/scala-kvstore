@@ -22,14 +22,14 @@ class Step2_SecondarySpec extends TestKit(ActorSystem("Step2SecondarySpec"))
     system.shutdown()
   }
 
-  test("case1: Secondary (in isolation) should properly register itself to the provided Arbiter") {
+  ignore("case1: Secondary (in isolation) should properly register itself to the provided Arbiter") {
     val arbiter = TestProbe()
     val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case1-secondary")
 
     arbiter.expectMsg(Join)
   }
 
-  test("case2: Secondary (in isolation) must handle Snapshots") {
+  ignore("case2: Secondary (in isolation) must handle Snapshots") {
     import Replicator._
 
     val arbiter = TestProbe()
@@ -55,7 +55,7 @@ class Step2_SecondarySpec extends TestKit(ActorSystem("Step2SecondarySpec"))
     client.get("k1") should be === None
   }
 
-  test("case3: Secondary should drop and immediately ack snapshots with older sequence numbers") {
+  ignore("case3: Secondary should drop and immediately ack snapshots with older sequence numbers") {
     import Replicator._
 
     val arbiter = TestProbe()
@@ -85,7 +85,7 @@ class Step2_SecondarySpec extends TestKit(ActorSystem("Step2SecondarySpec"))
     client.get("k1") should be === Some("v2")
   }
 
-  test("case4: Secondary should drop snapshots with future sequence numbers") {
+  ignore("case4: Secondary should drop snapshots with future sequence numbers") {
     import Replicator._
 
     val arbiter = TestProbe()
