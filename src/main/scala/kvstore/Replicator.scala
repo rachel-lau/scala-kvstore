@@ -3,6 +3,7 @@ package kvstore
 import akka.actor.Props
 import akka.actor.Actor
 import akka.actor.ActorRef
+import akka.event._
 import scala.concurrent.duration._
 
 object Replicator {
@@ -36,7 +37,9 @@ class Replicator(val replica: ActorRef) extends Actor {
     ret
   }
 
-  context.system.scheduler.schedule(10.milliseconds, 100.milliseconds) {
+  val log = Logging(context.system, this)
+
+  context.system.scheduler.schedule(0.milliseconds, 100.milliseconds) {
     acks foreach { case (seq, (_, Replicate(k, v, id))) => {
         replica ! Snapshot(k, v, seq)
       }
@@ -44,7 +47,7 @@ class Replicator(val replica: ActorRef) extends Actor {
   }
 
   /* TODO Behavior for the Replicator. */
-  def receive: Receive = {
+  def receive: Receive = LoggingReceive {
     case Replicate(key, valueOption, id) => {
       val seq = nextSeq
       acks += seq -> (self, Replicate(key, valueOption, id))
@@ -55,7 +58,6 @@ class Replicator(val replica: ActorRef) extends Actor {
       ack match {
         case Some((_, Replicate(k, v, id))) => {
           acks -= seq
-          replica ! Replicated(key, id)
         }
         case None => 
       }

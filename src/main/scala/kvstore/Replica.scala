@@ -1,6 +1,7 @@
 package kvstore
 
 import akka.actor.{ OneForOneStrategy, Props, ActorRef, Actor }
+import akka.event.LoggingReceive
 import kvstore.Arbiter._
 import scala.collection.immutable.Queue
 import akka.actor.SupervisorStrategy.Restart
@@ -60,7 +61,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   }
 
   /* TODO Behavior for  the leader role. */
-  val leader: Receive = {
+  val leader: Receive = LoggingReceive {
     case Insert(key, value, id) => {
       kv += key -> value
       replicators foreach { r => r ! Replicate(key, Some(value), id) }
@@ -87,11 +88,12 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   }
 
   /* TODO Behavior for the replica role. */
-  val replica: Receive = {
+  val replica: Receive = LoggingReceive {
     case Get(key, id) => {
       val opt = kv.get(key)
       sender ! GetResult(key, opt, id)
-    } case Snapshot(key, valueOption, seq) => {
+    }
+    case Snapshot(key, valueOption, seq) => {
       val expected = Math.max(expectedSeq, lastAckSeq + 1)
       if (seq < expected) {
         sender ! SnapshotAck(key, seq)
