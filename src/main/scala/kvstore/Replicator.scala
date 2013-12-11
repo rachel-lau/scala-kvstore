@@ -35,7 +35,14 @@ class Replicator(val replica: ActorRef) extends Actor {
     _seqCounter += 1
     ret
   }
-  
+
+  context.system.scheduler.schedule(10.milliseconds, 100.milliseconds) {
+    acks foreach { case (seq, (_, Replicate(k, v, id))) => {
+        replica ! Snapshot(k, v, seq)
+      }
+    }
+  }
+
   /* TODO Behavior for the Replicator. */
   def receive: Receive = {
     case Replicate(key, valueOption, id) => {
@@ -46,7 +53,10 @@ class Replicator(val replica: ActorRef) extends Actor {
     case SnapshotAck(key, seq) => {
       val ack = acks.get(seq)
       ack match {
-        case Some((_, Replicate(k, v, id))) => replica ! Replicated(key, id)
+        case Some((_, Replicate(k, v, id))) => {
+          acks -= seq
+          replica ! Replicated(key, id)
+        }
         case None => 
       }
     }
