@@ -50,14 +50,15 @@ class Replicator(val replica: ActorRef) extends Actor {
   def receive: Receive = LoggingReceive {
     case Replicate(key, valueOption, id) => {
       val seq = nextSeq
-      acks += seq -> (self, Replicate(key, valueOption, id))
+      acks += seq -> (sender, Replicate(key, valueOption, id))
       replica ! Snapshot(key, valueOption, seq)
     }
     case SnapshotAck(key, seq) => {
       val ack = acks.get(seq)
       ack match {
-        case Some((_, Replicate(k, v, id))) => {
+        case Some((primary, Replicate(k, v, id))) => {
           acks -= seq
+          primary ! Replicated(k, id)
         }
         case None => 
       }

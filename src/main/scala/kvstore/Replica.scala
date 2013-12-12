@@ -58,11 +58,15 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   var persister = context.actorOf(persistenceProps)
   context.watch(persister)
 
-  // the outstanding persistence request sent by the secondary
+  // the outstanding persistence request sent by the secondary to persister
   var acks = Map.empty[Long, (ActorRef, Snapshot)]
 
-  // the outstanding persistence request sent by the primary
+  // the outstanding persistence request sent by the primary to persister
   var persists = Map.empty[Long, (ActorRef, Replicate)]
+
+  // the outstanding persistence and replication requests waiting 
+  // by the primary 
+  var waitings = Map.empty[Long, (ActorRef, Int)]
 
   // sequence number used for persistence request
   var _seqCounter = 0L
@@ -77,12 +81,12 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   }
 
   context.system.scheduler.schedule(0.milliseconds, 100.milliseconds) {
-    acks foreach { case (id, (_, Snapshot(key, valueOption, seq))) => {
-        persister ! Persist(key, valueOption, id)
+    acks foreach { case (persistId, (_, Snapshot(key, valueOption, seq))) => {
+        persister ! Persist(key, valueOption, persistId)
       }
     }
-    persists foreach { case (id, (_, Replicate(key, valueOption, seq))) => {
-        persister ! Persist(key, valueOption, id)
+    persists foreach { case (persistId, (_, Replicate(key, valueOption, seq))) => {
+        persister ! Persist(key, valueOption, persistId)
       }
     }
   }
@@ -98,47 +102,23 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   val leader: Receive = LoggingReceive {
     case Insert(key, value, id) => {
       kv += key -> value
-      val seq = nextSeq
+      val persistId = nextSeq
       val replicate = Replicate(key, Some(value), id)
-      replicators foreach { r => r ! replicate }
-      persists += seq -> (sender, replicate)
-      persister ! Persist(key, Some(value), seq)
-
-      // schedule for timeout for persistence request
-      context.system.scheduler.scheduleOnce(1.second) {
-        if (persists contains seq) {
-          val persist = persists.get(seq)
-          persist match {
-            case Some((client, Replicate(k, v, id))) => {
-              persists -= seq
-              client ! OperationFailed(id)
-            }
-            case None => 
-          }
-        }
-      }
+      replicators foreach { replicator => replicator ! replicate }
+      persists += persistId -> (sender, replicate)
+      persister ! Persist(key, Some(value), persistId)
+      waitings += id -> (sender, replicators.size + 1)
+      scheduleTimeout(sender, id)
     }
     case Remove(key, id) => {
       kv -= key
-      val seq = nextSeq
+      val persistId = nextSeq
       val replicate = Replicate(key, None, id)
-      replicators foreach { r => r ! Replicate(key, None, id) }
-      persists += seq -> (sender, replicate)
-      persister ! Persist(key, None, seq)
-
-      // schedule for timeout for persistence request
-      context.system.scheduler.scheduleOnce(1.second) {
-        if (persists contains seq) {
-          val persist = persists.get(seq)
-          persist match {
-            case Some((client, Replicate(k, v, id))) => {
-              persists -= seq
-              client ! OperationFailed(id)
-            }
-            case None => 
-          }
-        }
-      }
+      replicators foreach { replicator => replicator ! replicate }
+      persists += persistId -> (sender, replicate)
+      persister ! Persist(key, None, persistId)
+      waitings += id -> (sender, replicators.size + 1)
+      scheduleTimeout(sender, id)
     }
     case Get(key, id) => {
       val opt = kv.get(key)
@@ -153,16 +133,46 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         replicators += replicator
       }
     }
-    case Persisted(key, seq) => {
-      if (persists contains seq) {
-        val persist = persists.get(seq)
+    case Persisted(key, persistId) => {
+      if (persists contains persistId) {
+        val persist = persists.get(persistId)
         persist match {
           case Some((client, Replicate(k, v, id))) => {
-            persists -= seq
-            client ! OperationAck(id)
+            persists -= persistId
+            checkWaitings(id)
           }
           case None => 
         }
+      }
+    }
+    case Replicated(key, id) => {
+      checkWaitings(id)
+    }
+  }
+
+  def scheduleTimeout(client: ActorRef, id: Long): Unit = {
+    // schedule for timeout for persistence request
+    context.system.scheduler.scheduleOnce(1.second) {
+      if (waitings contains id) {
+        waitings -= id
+        client ! OperationFailed(id)
+      }
+    }
+  }
+
+  def checkWaitings(id: Long): Unit = {
+    if (waitings contains id) {
+      val waiting = waitings.get(id)
+      waiting match {
+        case Some((client, numWaiting)) => {
+          if (numWaiting == 1) {
+            waitings -= id
+            client ! OperationAck(id)
+          } else {
+            waitings += id -> (client, numWaiting - 1)
+          }
+        }
+        case None =>
       }
     }
   }
@@ -185,6 +195,19 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         val id = nextSeq
         acks += id -> (sender, Snapshot(key, valueOption, seq))
         persister ! Persist(key, valueOption, id)
+
+        // schedule for timeout for persistence request
+        context.system.scheduler.scheduleOnce(1.second) {
+          if (acks contains id) {
+            val ack = acks.get(id)
+            ack match {
+              case Some((replicator, Snapshot(k, v, seq))) => {
+                acks -= id
+              }
+              case None => 
+            }
+          }
+        }
       }
     }
     case Persisted(key, id) => {
