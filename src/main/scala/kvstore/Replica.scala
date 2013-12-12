@@ -53,6 +53,22 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   // the expected sequence number
   var expectedSeq = 0L
 
+  var persister = context.actorOf(persistenceProps)
+  context.watch(persister)
+
+  override val supervisorStrategy = OneForOneStrategy(maxNrOfRetries = 5) {
+     case _: PersistenceException => SupervisorStrategy.Restart
+  }
+
+  var acks = Map.empty[Long, (ActorRef, Snapshot)]
+
+  var _seqCounter = 0L
+  def nextSeq = {
+    val ret = _seqCounter
+    _seqCounter += 1
+    ret
+  }
+
   arbiter ! Join
 
   def receive = {
@@ -102,9 +118,23 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
           case Some(value) => { kv += key -> value }
           case None => { kv -= key }
         }
-        lastAckSeq = seq
-        expectedSeq = lastAckSeq + 1
-        sender ! SnapshotAck(key, seq)
+        val id = nextSeq
+        acks += id -> (sender, Snapshot(key, valueOption, seq))
+        persister ! Persist(key, valueOption, id)
+      }
+    }
+    case Persisted(key, id) => {
+      if (acks contains id) {
+        val ack = acks.get(id)
+        ack match {
+          case Some((replicator, Snapshot(k, v, seq))) => {
+            acks -= id
+            lastAckSeq = seq
+            expectedSeq = lastAckSeq + 1
+            replicator ! SnapshotAck(key, seq)
+          }
+          case None => 
+        }
       }
     }
   }

@@ -22,7 +22,7 @@ class Step4_SecondaryPersistenceSpec extends TestKit(ActorSystem("Step4Secondary
     system.shutdown()
   }
 
-  ignore("case1: Secondary should not acknowledge snapshots until persisted") {
+  test("case1: Secondary should not acknowledge snapshots until persisted") {
     import Replicator._
 
     val arbiter = TestProbe()
