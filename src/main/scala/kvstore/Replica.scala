@@ -69,6 +69,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     ret
   }
 
+  context.system.scheduler.schedule(0.milliseconds, 100.milliseconds) {
+    acks foreach { case (id, (_, Snapshot(key, valueOption, seq))) => {
+        persister ! Persist(key, valueOption, id)
+      }
+    }
+  }
+
   arbiter ! Join
 
   def receive = {
