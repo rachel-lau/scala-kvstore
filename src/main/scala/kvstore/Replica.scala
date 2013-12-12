@@ -103,6 +103,20 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       replicators foreach { r => r ! replicate }
       persists += seq -> (sender, replicate)
       persister ! Persist(key, Some(value), seq)
+
+      // schedule for timeout for persistence request
+      context.system.scheduler.scheduleOnce(1.second) {
+        if (persists contains seq) {
+          val persist = persists.get(seq)
+          persist match {
+            case Some((client, Replicate(k, v, id))) => {
+              persists -= seq
+              client ! OperationFailed(id)
+            }
+            case None => 
+          }
+        }
+      }
     }
     case Remove(key, id) => {
       kv -= key
@@ -111,6 +125,20 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       replicators foreach { r => r ! Replicate(key, None, id) }
       persists += seq -> (sender, replicate)
       persister ! Persist(key, None, seq)
+
+      // schedule for timeout for persistence request
+      context.system.scheduler.scheduleOnce(1.second) {
+        if (persists contains seq) {
+          val persist = persists.get(seq)
+          persist match {
+            case Some((client, Replicate(k, v, id))) => {
+              persists -= seq
+              client ! OperationFailed(id)
+            }
+            case None => 
+          }
+        }
+      }
     }
     case Get(key, id) => {
       val opt = kv.get(key)

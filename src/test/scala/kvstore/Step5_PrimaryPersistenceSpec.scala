@@ -64,7 +64,7 @@ class Step5_PrimaryPersistenceSpec extends TestKit(ActorSystem("Step5PrimaryPers
     client.waitAck(setId)
   }
 
-  ignore("case3: Primary generates failure after 1 second if persistence fails") {
+  test("case3: Primary generates failure after 1 second if persistence fails") {
     val arbiter = TestProbe()
     val persistence = TestProbe()
     val primary = system.actorOf(Replica.props(arbiter.ref, probeProps(persistence)), "case3-primary")
