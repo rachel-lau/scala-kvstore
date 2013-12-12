@@ -23,7 +23,7 @@ class Step5_PrimaryPersistenceSpec extends TestKit(ActorSystem("Step5PrimaryPers
     system.shutdown()
   }
 
-  ignore("case1: Primary does not acknowledge updates which have not been persisted") {
+  test("case1: Primary does not acknowledge updates which have not been persisted") {
     val arbiter = TestProbe()
     val persistence = TestProbe()
     val primary = system.actorOf(Replica.props(arbiter.ref, probeProps(persistence)), "case1-primary")
@@ -42,7 +42,7 @@ class Step5_PrimaryPersistenceSpec extends TestKit(ActorSystem("Step5PrimaryPers
     client.waitAck(setId)
   }
 
-  ignore("case2: Primary retries persistence every 100 milliseconds") {
+  test("case2: Primary retries persistence every 100 milliseconds") {
     val arbiter = TestProbe()
     val persistence = TestProbe()
     val primary = system.actorOf(Replica.props(arbiter.ref, probeProps(persistence)), "case2-primary")

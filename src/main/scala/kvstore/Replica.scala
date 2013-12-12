@@ -42,8 +42,10 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
    */
   
   var kv = Map.empty[String, String]
+
   // a map from secondary replicas to replicators
   var secondaries = Map.empty[ActorRef, ActorRef]
+
   // the current set of replicators
   var replicators = Set.empty[ActorRef]
 
@@ -56,12 +58,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   var persister = context.actorOf(persistenceProps)
   context.watch(persister)
 
-  override val supervisorStrategy = OneForOneStrategy(maxNrOfRetries = 5) {
-     case _: PersistenceException => SupervisorStrategy.Restart
-  }
-
+  // the outstanding persistence request sent by the secondary
   var acks = Map.empty[Long, (ActorRef, Snapshot)]
 
+  // the outstanding persistence request sent by the primary
+  var persists = Map.empty[Long, (ActorRef, Replicate)]
+
+  // sequence number used for persistence request
   var _seqCounter = 0L
   def nextSeq = {
     val ret = _seqCounter
@@ -69,8 +72,16 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     ret
   }
 
+  override val supervisorStrategy = OneForOneStrategy(maxNrOfRetries = 5) {
+     case _: PersistenceException => SupervisorStrategy.Restart
+  }
+
   context.system.scheduler.schedule(0.milliseconds, 100.milliseconds) {
     acks foreach { case (id, (_, Snapshot(key, valueOption, seq))) => {
+        persister ! Persist(key, valueOption, id)
+      }
+    }
+    persists foreach { case (id, (_, Replicate(key, valueOption, seq))) => {
         persister ! Persist(key, valueOption, id)
       }
     }
@@ -87,13 +98,19 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   val leader: Receive = LoggingReceive {
     case Insert(key, value, id) => {
       kv += key -> value
-      replicators foreach { r => r ! Replicate(key, Some(value), id) }
-      sender ! OperationAck(id)
+      val seq = nextSeq
+      val replicate = Replicate(key, Some(value), id)
+      replicators foreach { r => r ! replicate }
+      persists += seq -> (sender, replicate)
+      persister ! Persist(key, Some(value), seq)
     }
     case Remove(key, id) => {
       kv -= key
+      val seq = nextSeq
+      val replicate = Replicate(key, None, id)
       replicators foreach { r => r ! Replicate(key, None, id) }
-      sender ! OperationAck(id)
+      persists += seq -> (sender, replicate)
+      persister ! Persist(key, None, seq)
     }
     case Get(key, id) => {
       val opt = kv.get(key)
@@ -106,6 +123,18 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         val replicator = context.actorOf(Replicator.props(s))
         secondaries += s -> replicator
         replicators += replicator
+      }
+    }
+    case Persisted(key, seq) => {
+      if (persists contains seq) {
+        val persist = persists.get(seq)
+        persist match {
+          case Some((client, Replicate(k, v, id))) => {
+            persists -= seq
+            client ! OperationAck(id)
+          }
+          case None => 
+        }
       }
     }
   }
