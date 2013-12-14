@@ -21,7 +21,7 @@ class Step6_NewSecondarySpec extends TestKit(ActorSystem("Step6NewSecondarySpec"
     system.shutdown()
   }
 
-  ignore("case1: Primary must start replication to new replicas") {
+  test("case1: Primary must start replication to new replicas") {
     val arbiter = TestProbe()
     val primary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case1-primary")
     val user = session(primary)
