@@ -92,7 +92,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
      case _: PersistenceException => SupervisorStrategy.Restart
   }
 
-  context.system.scheduler.schedule(0.milliseconds, 100.milliseconds) {
+  context.system.scheduler.schedule(0.milliseconds, 50.milliseconds) {
     acks foreach { case (persistId, (_, Snapshot(key, valueOption, seq))) => {
         persister ! Persist(key, valueOption, persistId)
       }
@@ -127,7 +127,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case Replicas(replicas) => {
       val others = replicas - self
       val added = others filter { !secondaries.contains(_) }
+      val removed = secondaries.keySet filter { others.isEmpty || others.contains(_) }
       added foreach { secondary => populateReplica(secondary) }
+      removed foreach { secondary => stopReplica(secondary) }
     }
     case Persisted(key, persistId) => {
       if (persists contains persistId) {
@@ -199,6 +201,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     }
 
     val replicator = context.actorOf(Replicator.props(secondary))
+    context.watch(replicator)
     secondaries += secondary -> replicator
 
     val count = kv.size
@@ -211,6 +214,20 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       pendingReplicatorRequests += replicator -> count
     } else {
       replicators += replicator
+    }
+  }
+
+  def stopReplica(secondary: ActorRef): Unit = {
+    val r = secondaries.get(secondary)
+    r match {
+      case Some(replicator) => {
+        pendingReplicatorRequests -= replicator
+        pendingReplicatorUpdates -= replicator
+        secondaries -= secondary
+        context.stop(persister)
+        context.stop(replicator)
+      }
+      case None =>
     }
   }
 
