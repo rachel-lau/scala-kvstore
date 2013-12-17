@@ -67,7 +67,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   // the outstanding persistence and replication requests waiting 
   // by the primary 
-  var waitings = Map.empty[Long, (ActorRef, Int)]
+  var waitings = Map.empty[Long, (ActorRef, Set[ActorRef])]
 
   // replicator actorRef -> number of replicate requests waiting
   // by the primary
@@ -137,7 +137,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         persist match {
           case Some((client, Replicate(k, v, id))) => {
             persists -= persistId
-            checkWaitings(id)
+            checkWaitings(id, persister)
           }
           case None => 
         }
@@ -147,7 +147,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       if (pendingReplicatorRequests contains sender) {
         checkReplicaReady(sender)
       } else {
-        checkWaitings(id)
+        checkWaitings(id, sender)
       }
     }
   }
@@ -157,7 +157,11 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   def persistAndReplicate(client: ActorRef, key: String, value: Option[String], id: Long): Unit = {
     val persistId = nextSeq
     val replicate = Replicate(key, value, id)
-    replicators foreach { replicator => replicator ! replicate }
+    var waitingForAcks = Set.empty[ActorRef]
+    replicators foreach { replicator => {
+      replicator ! replicate 
+      waitingForAcks += replicator
+    }}
     pendingReplicatorRequests foreach {
       case (replicator, count) => {
         if (pendingReplicatorUpdates contains replicator) {
@@ -165,17 +169,20 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
           updates match {
             case Some(replicates) => {
               pendingReplicatorUpdates += replicator -> (replicates ::: List(replicate))
+              waitingForAcks += replicator
             }
             case None => 
           }
         } else {
           pendingReplicatorUpdates += replicator -> List(replicate)
+          waitingForAcks += replicator
         }
       }
     }
     persists += persistId -> (client, replicate)
     persister ! Persist(key, value, persistId)
-    waitings += id -> (client, replicators.size + pendingReplicatorRequests.size + 1)
+    waitingForAcks += persister
+    waitings += id -> (client, waitingForAcks)
     scheduleTimeout(client, id)
   }
 
@@ -221,6 +228,17 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     val r = secondaries.get(secondary)
     r match {
       case Some(replicator) => {
+        waitings foreach { case (id, (client, waitingForAcks)) => {
+          if (waitingForAcks contains replicator) {
+            val remainWaitingForAcks = waitingForAcks - replicator
+            if (remainWaitingForAcks.isEmpty) {
+              waitings -= id
+              client ! OperationAck(id)
+            } else {
+              waitings += id -> (client, remainWaitingForAcks)
+            }
+          }
+        }}
         pendingReplicatorRequests -= replicator
         pendingReplicatorUpdates -= replicator
         secondaries -= secondary
@@ -259,16 +277,17 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   // Check if primary still waits for confirmation for persistence
   // If no longer waiting, send OperationAck back to client
-  def checkWaitings(id: Long): Unit = {
+  def checkWaitings(id: Long, responded: ActorRef): Unit = {
     if (waitings contains id) {
       val waiting = waitings.get(id)
       waiting match {
-        case Some((client, numWaiting)) => {
-          if (numWaiting == 1) {
+        case Some((client, waitingForAcks)) => {
+          val remainingWaitingForAcks = waitingForAcks - responded
+          if (remainingWaitingForAcks.isEmpty) {
             waitings -= id
             client ! OperationAck(id)
           } else {
-            waitings += id -> (client, numWaiting - 1)
+            waitings += id -> (client, remainingWaitingForAcks)
           }
         }
         case None =>
